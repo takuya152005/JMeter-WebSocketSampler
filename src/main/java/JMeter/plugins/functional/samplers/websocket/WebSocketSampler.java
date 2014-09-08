@@ -5,6 +5,20 @@
 package JMeter.plugins.functional.samplers.websocket;
 
 import java.io.IOException;
+import java.io.UnsupportedEncodingException;
+import java.net.HttpCookie;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.net.URL;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+
 import org.apache.commons.lang3.StringUtils;
 import org.apache.jmeter.config.Argument;
 import org.apache.jmeter.config.Arguments;
@@ -19,25 +33,15 @@ import org.apache.jmeter.samplers.AbstractSampler;
 import org.apache.jmeter.samplers.Entry;
 import org.apache.jmeter.samplers.SampleResult;
 import org.apache.jmeter.testelement.TestElement;
-import org.apache.jmeter.testelement.property.*;
+import org.apache.jmeter.testelement.TestStateListener;
+import org.apache.jmeter.testelement.property.PropertyIterator;
+import org.apache.jmeter.testelement.property.StringProperty;
+import org.apache.jmeter.testelement.property.TestElementProperty;
 import org.apache.jorphan.logging.LoggingManager;
 import org.apache.jorphan.reflect.ClassTools;
 import org.apache.jorphan.util.JMeterException;
 import org.apache.jorphan.util.JOrphanUtils;
 import org.apache.log.Logger;
-
-
-import java.io.UnsupportedEncodingException;
-import java.net.HttpCookie;
-import java.net.URI;
-import java.net.URISyntaxException;
-import java.net.URL;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
-import org.apache.jmeter.testelement.TestStateListener;
 import org.eclipse.jetty.util.HttpCookieStore;
 import org.eclipse.jetty.util.ssl.SslContextFactory;
 import org.eclipse.jetty.websocket.client.ClientUpgradeRequest;
@@ -48,6 +52,8 @@ import org.eclipse.jetty.websocket.client.WebSocketClient;
  * @author Maciej Zaleski
  */
 public class WebSocketSampler extends AbstractSampler implements TestStateListener {
+    private static final long serialVersionUID = 5859387434748163229L;
+
     public static int DEFAULT_CONNECTION_TIMEOUT = 20000; //20 sec
     public static int DEFAULT_RESPONSE_TIMEOUT = 20000; //20 sec
     public static int MESSAGE_BACKLOG_COUNT = 3;
@@ -62,6 +68,26 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
     
     private static Map<String, ServiceSocket> connectionList;
     private static ExecutorService executor = Executors.newCachedThreadPool();
+    // TODO: the size of this thread pool should be configurable
+    
+    private static Map<String, ScheduledExecutorService> schedulers = new HashMap<>();
+    
+    private static ScheduledExecutorService getScheduler(String name, int threads) {
+        
+        synchronized (schedulers)
+        {
+            if( schedulers.containsKey(name) ) {
+                return schedulers.get(name);
+            }
+            
+            log.info("Creating websocket ping executor " + name + " with " + threads + " threads");
+            ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(threads);
+            schedulers.put(name, scheduler);
+            return scheduler;
+        }
+    }
+    
+    private ScheduledFuture<?> pingerFuture;
 
     private HeaderManager headerManager;
     private CookieManager cookieManager;
@@ -69,7 +95,6 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
 
     public WebSocketSampler() {
         super();
-        setName("WebSocket sampler");
     }
 
     private ServiceSocket getConnectionSocket() throws Exception {
@@ -133,6 +158,25 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
         
         socket.awaitOpen(connectionTimeout, TimeUnit.MILLISECONDS);
 
+        
+        int pingFrequency = Integer.parseInt(getPingFrequency());
+        final ServiceSocket socketFinal = socket;
+        if( pingFrequency > 0 ) {
+            ScheduledExecutorService scheduler = getScheduler(getPingThreadPoolName(), Integer.parseInt(getPingThreadPoolSize()));
+            pingerFuture = scheduler.scheduleAtFixedRate(
+                    new Runnable() {
+        
+                        @Override
+                        public void run()
+                        {
+                            log.debug("pinging");
+                            socketFinal.ping();
+                        }
+                        
+                    },
+                0, pingFrequency, TimeUnit.SECONDS);
+        }
+        
         if (cookieManager != null && cookieHandler != null) {
             String setCookieHeader = socket.getSession().getUpgradeResponse().getHeader("set-cookie");
             if (setCookieHeader != null) {
@@ -198,6 +242,11 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
             // - Response matching connection closing pattern is received
             // - Timeout is reached
             socket.awaitClose(responseTimeout, TimeUnit.MILLISECONDS);
+            
+            if( pingerFuture != null ) {
+                log.info("removing pinger");
+                pingerFuture.cancel(true);
+            }
             
             //If no response is received set code 204; actually not used...needs to do something else
             if (socket.getResponseMessage() == null || socket.getResponseMessage().isEmpty()) {
@@ -460,6 +509,30 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
 
     public String getProxyUsername() {
             return getPropertyAsString("proxyUsername");
+    }
+
+    public void setPingFrequency(String pingFrequency) {
+        setProperty("pingFrequency", pingFrequency);
+    }
+    
+    public String getPingFrequency() {
+        return getPropertyAsString("pingFrequency", "0");
+    }
+
+    public void setPingThreadPoolName(String pingThreadPoolName) {
+        setProperty("pingThreadPoolName", pingThreadPoolName);
+    }
+    
+    public String getPingThreadPoolName() {
+        return getPropertyAsString("pingThreadPoolName", "default");
+    }
+
+    public void setPingThreadPoolSize(String pingThreadPoolSize) {
+        setProperty("pingThreadPoolSize", pingThreadPoolSize);
+    }
+    
+    public String getPingThreadPoolSize() {
+        return getPropertyAsString("pingThreadPoolSize", "10");
     }
 
     public void setMessageBacklog(String messageBacklog) {

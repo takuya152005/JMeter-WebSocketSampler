@@ -78,7 +78,7 @@ public class ServiceSocket {
         connected = true;
         openLatch.countDown();
     }
-
+    
     @OnWebSocketClose
     public void onClose(int statusCode, String reason) {
         if (statusCode != 1000) {
@@ -174,6 +174,17 @@ public class ServiceSocket {
         }
     }
 
+    public void ping() {
+        try
+        {
+            session.getRemote().sendPing(null);
+        }
+        catch (IOException e)
+        {
+            log.warn("PING FAILED", e);
+        }
+    }
+    
     /**
      * @return the error
      */

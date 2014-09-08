@@ -5,21 +5,21 @@
 package JMeter.plugins.functional.samplers.websocket;
 
 import java.awt.BorderLayout;
+
 import org.apache.jmeter.config.Arguments;
 import org.apache.jmeter.config.gui.ArgumentsPanel;
 import org.apache.jmeter.samplers.gui.AbstractSamplerGui;
 import org.apache.jmeter.testelement.TestElement;
-import org.apache.jorphan.logging.LoggingManager;
-import org.apache.log.Logger;
 
 /**
  *
  * @author Maciej Zaleski
  */
 public class WebSocketSamplerGui extends AbstractSamplerGui {
+    private static final long serialVersionUID = 7149170773750675055L;
 
     private WebSocketSamplerPanel webSocketSamplerPanel;
-    private static final Logger log = LoggingManager.getLoggerForClass();
+
 
     public WebSocketSamplerGui() {
         super();
@@ -66,6 +66,9 @@ public class WebSocketSamplerGui extends AbstractSamplerGui {
             webSocketSamplerPanel.setProxyPassword(webSocketSamplerTestElement.getProxyPassword());
             webSocketSamplerPanel.setProxyPort(webSocketSamplerTestElement.getProxyPort());
             webSocketSamplerPanel.setProxyUsername(webSocketSamplerTestElement.getProxyUsername());
+            webSocketSamplerPanel.setPingFrequency(webSocketSamplerTestElement.getPingFrequency());
+            webSocketSamplerPanel.setPingThreadPoolName(webSocketSamplerTestElement.getPingThreadPoolName());
+            webSocketSamplerPanel.setPingThreadPoolSize(webSocketSamplerTestElement.getPingThreadPoolSize());
             webSocketSamplerPanel.setMessageBacklog(webSocketSamplerTestElement.getMessageBacklog());
             webSocketSamplerPanel.setClearBacklog(webSocketSamplerTestElement.getClearBacklog());
 
@@ -106,6 +109,9 @@ public class WebSocketSamplerGui extends AbstractSamplerGui {
             webSocketSamplerTestElement.setProxyPassword(webSocketSamplerPanel.getProxyPassword());
             webSocketSamplerTestElement.setProxyPort(webSocketSamplerPanel.getProxyPort());
             webSocketSamplerTestElement.setProxyUsername(webSocketSamplerPanel.getProxyUsername());
+            webSocketSamplerTestElement.setPingFrequency(webSocketSamplerPanel.getPingFrequency());
+            webSocketSamplerTestElement.setPingThreadPoolName(webSocketSamplerPanel.getPingThreadPoolName());
+            webSocketSamplerTestElement.setPingThreadPoolSize(webSocketSamplerPanel.getPingThreadPoolSize());
             webSocketSamplerTestElement.setMessageBacklog(webSocketSamplerPanel.getMessageBacklog());
             webSocketSamplerTestElement.setClearBacklog(webSocketSamplerPanel.getClearBacklog());
 
