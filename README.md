@@ -1,8 +1,8 @@
 JMeter
 ======
 
-JMeter - WebSocket Sampler
+JMeter - WebSocket Sampler with Ping Support.
 
-Compiled binary can be downloaded from the Releases.
+This is a modified version of maciejzaleski/JMeter-WebSocketSampler that takes in the changes to thread pooling and cookie handling from tradingscreen/JMeter-WebSocketSampler
 
-Please have a look at the Wiki pages for instructions on how to install the plug-in.
+Ping support is added to allow long-lived connections to stay open regardless of TCP timeout. 
