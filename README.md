@@ -3,6 +3,6 @@ JMeter
 
 JMeter - WebSocket Sampler with Ping Support.
 
-This is a modified version of maciejzaleski/JMeter-WebSocketSampler that takes in the changes to thread pooling and cookie handling from tradingscreen/JMeter-WebSocketSampler
+This based on a modified (by https://github.com/ramsperger) version of maciejzaleski/JMeter-WebSocketSampler that takes in the changes to thread pooling and cookie handling from tradingscreen/JMeter-WebSocketSampler and has a Ping support.
 
-Ping support is added to allow long-lived connections to stay open regardless of TCP timeout. 
+Modified further by me to enable sending several frames in a WebSocketSampler with pauses between them to make it more easy to load test Vaadin application with Push communication.
