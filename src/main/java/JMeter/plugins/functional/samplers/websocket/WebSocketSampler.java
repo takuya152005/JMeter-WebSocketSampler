@@ -53,6 +53,8 @@ import org.eclipse.jetty.websocket.client.WebSocketClient;
  */
 public class WebSocketSampler extends AbstractSampler implements TestStateListener {
     private static final long serialVersionUID = 5859387434748163229L;
+    
+    private static final String PAUSE_PREFIX = "%%%pause";
 
     public static int DEFAULT_CONNECTION_TIMEOUT = 20000; //20 sec
     public static int DEFAULT_RESPONSE_TIMEOUT = 20000; //20 sec
@@ -209,6 +211,8 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
         String payloadMessage = getRequestPayload();
         sampleResult.setSamplerData(payloadMessage);
         
+        log.info("Read payload message: "+payloadMessage);
+        
         //Could improve precission by moving this closer to the action
         sampleResult.sampleStart();
 
@@ -224,9 +228,21 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
                 return sampleResult;
             }
             
+            String[] payloadRows = payloadMessage.split("\n");
+            log.info("Find "+payloadRows.length+"rows from payload");
+            
             //Send message only if it is not empty
             if (!payloadMessage.isEmpty()) {
-                socket.sendMessage(payloadMessage);
+            	for (String messageRow : payloadRows) {
+            		if (messageRow.startsWith(PAUSE_PREFIX)) {
+            			long pauseMs = Long.parseLong(messageRow.split(PAUSE_PREFIX)[1]);
+            			log.info("Pausing for "+pauseMs+" ms");
+            			Thread.sleep(pauseMs);
+            		} else {
+            			log.info("Sending message row: "+messageRow);
+            			socket.sendMessage(messageRow);
+            		}
+            	}
             }
 
             int responseTimeout;
