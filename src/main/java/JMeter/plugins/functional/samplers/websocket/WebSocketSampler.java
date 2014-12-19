@@ -55,6 +55,7 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
     private static final long serialVersionUID = 5859387434748163229L;
     
     private static final String PAUSE_PREFIX = "%%%pause";
+    private static final String CLOSE_PREFIX = "%%%close";
 
     public static int DEFAULT_CONNECTION_TIMEOUT = 20000; //20 sec
     public static int DEFAULT_RESPONSE_TIMEOUT = 20000; //20 sec
@@ -205,6 +206,7 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
         StringBuilder errorList = new StringBuilder();
         errorList.append("\n\n[Problems]\n");
         
+        boolean closeSocket = false;
         boolean isOK = false;
 
         //Set the message payload in the Sampler
@@ -238,6 +240,9 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
             			long pauseMs = Long.parseLong(messageRow.split(PAUSE_PREFIX)[1]);
             			log.info("Pausing for "+pauseMs+" ms");
             			Thread.sleep(pauseMs);
+            		} else if (messageRow.startsWith(CLOSE_PREFIX)) {
+            			closeSocket = true;
+            			break;
             		} else {
             			log.info("Sending message row: "+messageRow);
             			socket.sendMessage(messageRow);
@@ -298,6 +303,10 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
         
         sampleResult.sampleEnd();
         sampleResult.setSuccessful(isOK);
+        
+        if (closeSocket) {
+        	socket.close(200, "Close requested by the test");
+        }
         
         String logMessage = (socket != null) ? socket.getLogMessage() : "";
         sampleResult.setResponseMessage(logMessage + errorList);

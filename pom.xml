@@ -3,7 +3,7 @@
 
     <groupId>co.uk.bugtrap</groupId>
     <artifactId>JMeterWebSocketSampler</artifactId>
-    <version>1.0.2-SNAPSHOT</version>
+    <version>1.0.3-SNAPSHOT</version>
 
     <packaging>jar</packaging>
 
@@ -12,7 +12,7 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <dependency.version.jmeter>2.11</dependency.version.jmeter>
-        <dependency.version.jetty>9.1.1.v20140108</dependency.version.jetty>
+        <dependency.version.jetty>9.2.2.v20140723</dependency.version.jetty>
     </properties>
 
     <build>
