@@ -12,12 +12,7 @@ import java.net.URISyntaxException;
 import java.net.URL;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledFuture;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.*;
 
 import org.apache.commons.lang3.StringUtils;
 import org.apache.jmeter.config.Argument;
@@ -42,54 +37,50 @@ import org.apache.jorphan.reflect.ClassTools;
 import org.apache.jorphan.util.JMeterException;
 import org.apache.jorphan.util.JOrphanUtils;
 import org.apache.log.Logger;
+import org.eclipse.jetty.http.HttpStatus;
 import org.eclipse.jetty.util.HttpCookieStore;
 import org.eclipse.jetty.util.ssl.SslContextFactory;
 import org.eclipse.jetty.websocket.client.ClientUpgradeRequest;
 import org.eclipse.jetty.websocket.client.WebSocketClient;
 
 /**
- *
  * @author Maciej Zaleski
  */
 public class WebSocketSampler extends AbstractSampler implements TestStateListener {
     private static final long serialVersionUID = 5859387434748163229L;
-    
-    private static final String PAUSE_PREFIX = "%%%pause";
-    private static final String CLOSE_PREFIX = "%%%close";
 
-    public static int DEFAULT_CONNECTION_TIMEOUT = 20000; //20 sec
-    public static int DEFAULT_RESPONSE_TIMEOUT = 20000; //20 sec
-    public static int MESSAGE_BACKLOG_COUNT = 3;
-    
+    public static final int DEFAULT_CONNECTION_TIMEOUT = 20000; //20 sec
+    public static final int DEFAULT_RESPONSE_TIMEOUT = 20000; //20 sec
+    public static final int MESSAGE_BACKLOG_COUNT = 3;
+
     private static final Logger log = LoggingManager.getLoggerForClass();
-    
+
     private static final String ARG_VAL_SEP = "="; // $NON-NLS-1$
     private static final String QRY_SEP = "&"; // $NON-NLS-1$
     private static final String WS_PREFIX = "ws://"; // $NON-NLS-1$
     private static final String WSS_PREFIX = "wss://"; // $NON-NLS-1$
     private static final String DEFAULT_PROTOCOL = "ws";
-    
-    private static Map<String, ServiceSocket> connectionList;
+
+    private static Map<String, ServiceSocket> connectionsMap;
     private static ExecutorService executor = Executors.newCachedThreadPool();
     // TODO: the size of this thread pool should be configurable
-    
+
     private static Map<String, ScheduledExecutorService> schedulers = new HashMap<>();
-    
+
     private static ScheduledExecutorService getScheduler(String name, int threads) {
-        
-        synchronized (schedulers)
-        {
-            if( schedulers.containsKey(name) ) {
+
+        synchronized (schedulers) {
+            if (schedulers.containsKey(name)) {
                 return schedulers.get(name);
             }
-            
+
             log.info("Creating websocket ping executor " + name + " with " + threads + " threads");
             ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(threads);
             schedulers.put(name, scheduler);
             return scheduler;
         }
     }
-    
+
     private ScheduledFuture<?> pingerFuture;
 
     private HeaderManager headerManager;
@@ -106,20 +97,20 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
         String connectionId = getThreadName() + getConnectionId();
         ServiceSocket socket;
 
+        if (isStreamingConnection() && connectionsMap.containsKey(connectionId)) {
+            socket = connectionsMap.get(connectionId);
+            socket.initialize(this);
+            return socket;
+        }
+
         //Create WebSocket client
         SslContextFactory sslContexFactory = new SslContextFactory();
         sslContexFactory.setTrustAll(isIgnoreSslErrors());
         WebSocketClient webSocketClient = new WebSocketClient(sslContexFactory, executor);
-        
-        if (isStreamingConnection()) {
-             if (connectionList.containsKey(connectionId)) {
-                 socket = connectionList.get(connectionId);
-                 socket.initialize(this);
-                 return socket;
-             } else {
-                socket = new ServiceSocket(this, webSocketClient);
-                connectionList.put(connectionId, socket);
-             }
+
+        if(isStreamingConnection()){
+            socket = new ServiceSocket(this, webSocketClient);
+            connectionsMap.put(connectionId, socket);
         } else {
             socket = new ServiceSocket(this, webSocketClient);
         }
@@ -149,7 +140,7 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
             }
         }
         webSocketClient.connect(socket, uri, request);
-        
+
         //Get connection timeout or use the default value
         int connectionTimeout;
         try {
@@ -158,33 +149,32 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
             log.warn("Connection timeout is not a number; using the default connection timeout of " + DEFAULT_CONNECTION_TIMEOUT + "ms");
             connectionTimeout = DEFAULT_CONNECTION_TIMEOUT;
         }
-        
+
         socket.awaitOpen(connectionTimeout, TimeUnit.MILLISECONDS);
 
-        
+
         int pingFrequency = Integer.parseInt(getPingFrequency());
         final ServiceSocket socketFinal = socket;
-        if( pingFrequency > 0 ) {
+        if (pingFrequency > 0) {
             ScheduledExecutorService scheduler = getScheduler(getPingThreadPoolName(), Integer.parseInt(getPingThreadPoolSize()));
             pingerFuture = scheduler.scheduleAtFixedRate(
                     new Runnable() {
-        
+
                         @Override
-                        public void run()
-                        {
+                        public void run() {
                             log.debug("pinging");
                             socketFinal.ping();
                         }
-                        
+
                     },
-                0, pingFrequency, TimeUnit.SECONDS);
+                    0, pingFrequency, TimeUnit.SECONDS);
         }
-        
+
         if (cookieManager != null && cookieHandler != null) {
             String setCookieHeader = socket.getSession().getUpgradeResponse().getHeader("set-cookie");
             if (setCookieHeader != null) {
                 cookieHandler.addCookieFromHeader(cookieManager, true, setCookieHeader, new URL(
-                        uri.getScheme() == null || uri.getScheme().equalsIgnoreCase("ws") ? "HTTP" : "HTTPS",
+                        uri.getScheme() == null || "ws".equalsIgnoreCase(uri.getScheme()) ? "HTTP" : "HTTPS",
                         uri.getHost(),
                         uri.getPort(),
                         uri.getQuery() != null ? uri.getPath() + "?" + uri.getQuery() : uri.getPath()
@@ -194,27 +184,28 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
 
         return socket;
     }
-    
+
     @Override
     public SampleResult sample(Entry entry) {
         ServiceSocket socket = null;
         SampleResult sampleResult = new SampleResult();
         sampleResult.setSampleLabel(getName());
         sampleResult.setDataEncoding(getContentEncoding());
-        
+
         //This StringBuilder will track all exceptions related to the protocol processing
         StringBuilder errorList = new StringBuilder();
         errorList.append("\n\n[Problems]\n");
-        
+
         boolean closeSocket = false;
         boolean isOK = false;
+        boolean isTimeout = false;
 
         //Set the message payload in the Sampler
         String payloadMessage = getRequestPayload();
         sampleResult.setSamplerData(payloadMessage);
-        
-        log.info("Read payload message: "+payloadMessage);
-        
+
+        log.info("Read payload message: " + payloadMessage);
+
         //Could improve precission by moving this closer to the action
         sampleResult.sampleStart();
 
@@ -226,28 +217,13 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
                 sampleResult.setSuccessful(false);
                 sampleResult.sampleEnd();
                 sampleResult.setResponseMessage(errorList.toString());
-                errorList.append(" - Connection couldn't be opened").append("\n");
+                errorList.append(" - Connection couldn't be opened\n");
                 return sampleResult;
             }
-            
-            String[] payloadRows = payloadMessage.split("\n");
-            log.info("Find "+payloadRows.length+"rows from payload");
-            
+
             //Send message only if it is not empty
             if (!payloadMessage.isEmpty()) {
-            	for (String messageRow : payloadRows) {
-            		if (messageRow.startsWith(PAUSE_PREFIX)) {
-            			long pauseMs = Long.parseLong(messageRow.split(PAUSE_PREFIX)[1]);
-            			log.info("Pausing for "+pauseMs+" ms");
-            			Thread.sleep(pauseMs);
-            		} else if (messageRow.startsWith(CLOSE_PREFIX)) {
-            			closeSocket = true;
-            			break;
-            		} else {
-            			log.info("Sending message row: "+messageRow);
-            			socket.sendMessage(messageRow);
-            		}
-            	}
+                socket.sendMessage(payloadMessage);
             }
 
             int responseTimeout;
@@ -257,38 +233,41 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
                 log.warn("Request timeout is not a number; using the default request timeout of " + DEFAULT_RESPONSE_TIMEOUT + "ms");
                 responseTimeout = DEFAULT_RESPONSE_TIMEOUT;
             }
-            
+
             //Wait for any of the following:
             // - Response matching response pattern is received
             // - Response matching connection closing pattern is received
             // - Timeout is reached
             socket.awaitClose(responseTimeout, TimeUnit.MILLISECONDS);
-            
-            if( pingerFuture != null ) {
+
+            if (pingerFuture != null) {
                 log.info("removing pinger");
                 pingerFuture.cancel(true);
             }
-            
-            //If no response is received set code 204; actually not used...needs to do something else
-            if (socket.getResponseMessage() == null || socket.getResponseMessage().isEmpty()) {
-                sampleResult.setResponseCode("204");
+
+            //If no response matching response pattern is reveived
+            // and no response matching connection closing pattern is received
+            // it seems that timeout is reached
+            String responseMessage = socket.getResponseMessage();
+            if (responseMessage == null || responseMessage.isEmpty()) {
+                isTimeout = true;
             }
-            
+
             //Set sampler response code
-            if (socket.getError() != 0) {
+            if (socket.getError() != 0 || isTimeout) {
+                sampleResult.setResponseCode(isTimeout ? String.valueOf(HttpStatus.NO_CONTENT_204) : socket.getError().toString());
                 isOK = false;
-                sampleResult.setResponseCode(socket.getError().toString());
             } else {
                 sampleResult.setResponseCodeOK();
                 isOK = true;
             }
-            
+
             //set sampler response
             sampleResult.setResponseData(socket.getResponseMessage(), getContentEncoding());
 
-            if (getClearBacklog())
+            if (getClearBacklog()) {
                 socket.clearBacklog();
-
+            }
         } catch (URISyntaxException e) {
             errorList.append(" - Invalid URI syntax: ").append(e.getMessage()).append("\n").append(StringUtils.join(e.getStackTrace(), "\n")).append("\n");
         } catch (IOException e) {
@@ -300,14 +279,14 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
         } catch (Exception e) {
             errorList.append(" - Unexpected error: ").append(e.getMessage()).append("\n").append(StringUtils.join(e.getStackTrace(), "\n")).append("\n");
         }
-        
+
         sampleResult.sampleEnd();
         sampleResult.setSuccessful(isOK);
-        
+
         if (closeSocket) {
-        	socket.close(200, "Close requested by the test");
+            socket.close(200, "Close requested by the test");
         }
-        
+
         String logMessage = (socket != null) ? socket.getLogMessage() : "";
         sampleResult.setResponseMessage(logMessage + errorList);
         return sampleResult;
@@ -370,16 +349,16 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
     }
 
     public String getServerPort() {
-        final String port_s = getPropertyAsString("serverPort", "0");
+        final String portAsString = getPropertyAsString("serverPort", "0");
         Integer port;
         String protocol = getProtocol();
-        
+
         try {
-            port = Integer.parseInt(port_s);
+            port = Integer.valueOf(portAsString);
         } catch (Exception ex) {
             port = 0;
         }
-        
+
         if (port == 0) {
             if ("wss".equalsIgnoreCase(protocol)) {
                 return String.valueOf(HTTPConstants.DEFAULT_HTTPS_PORT);
@@ -389,27 +368,27 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
         }
         return port.toString();
     }
-    
+
     public void setServerPort(String port) {
         setProperty("serverPort", port);
-    }    
-    
+    }
+
     public String getResponseTimeout() {
         return getPropertyAsString("responseTimeout", "20000");
-    }    
-    
+    }
+
     public void setResponseTimeout(String responseTimeout) {
         setProperty("responseTimeout", responseTimeout);
-    }    
+    }
 
-        
+
     public String getConnectionTimeout() {
         return getPropertyAsString("connectionTimeout", "5000");
-    }    
-    
+    }
+
     public void setConnectionTimeout(String connectionTimeout) {
         setProperty("connectionTimeout", connectionTimeout);
-    }    
+    }
 
     public void setProtocol(String protocol) {
         setProperty("protocol", protocol);
@@ -424,122 +403,122 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
     }
 
     public void setServerAddress(String serverAddress) {
-            setProperty("serverAddress", serverAddress);
+        setProperty("serverAddress", serverAddress);
     }
 
     public String getServerAddress() {
-            return getPropertyAsString("serverAddress");
+        return getPropertyAsString("serverAddress");
     }
 
 
     public void setImplementation(String implementation) {
-            setProperty("implementation", implementation);
+        setProperty("implementation", implementation);
     }
 
     public String getImplementation() {
-            return getPropertyAsString("implementation");
+        return getPropertyAsString("implementation");
     }
 
     public void setContextPath(String contextPath) {
-            setProperty("contextPath", contextPath);
+        setProperty("contextPath", contextPath);
     }
 
     public String getContextPath() {
-            return getPropertyAsString("contextPath");
+        return getPropertyAsString("contextPath");
     }
 
     public void setContentEncoding(String contentEncoding) {
-            setProperty("contentEncoding", contentEncoding);
+        setProperty("contentEncoding", contentEncoding);
     }
 
     public String getContentEncoding() {
-            return getPropertyAsString("contentEncoding", "UTF-8");
+        return getPropertyAsString("contentEncoding", "UTF-8");
     }
 
     public void setRequestPayload(String requestPayload) {
-            setProperty("requestPayload", requestPayload);
+        setProperty("requestPayload", requestPayload);
     }
 
     public String getRequestPayload() {
-            return getPropertyAsString("requestPayload");
+        return getPropertyAsString("requestPayload");
     }
 
     public void setIgnoreSslErrors(Boolean ignoreSslErrors) {
-            setProperty("ignoreSslErrors", ignoreSslErrors);
+        setProperty("ignoreSslErrors", ignoreSslErrors);
     }
 
     public Boolean isIgnoreSslErrors() {
-            return getPropertyAsBoolean("ignoreSslErrors");
+        return getPropertyAsBoolean("ignoreSslErrors");
     }
 
     public void setStreamingConnection(Boolean streamingConnection) {
-            setProperty("streamingConnection", streamingConnection);
+        setProperty("streamingConnection", streamingConnection);
     }
 
     public Boolean isStreamingConnection() {
-            return getPropertyAsBoolean("streamingConnection");
+        return getPropertyAsBoolean("streamingConnection");
     }
 
     public void setConnectionId(String connectionId) {
-            setProperty("connectionId", connectionId);
+        setProperty("connectionId", connectionId);
     }
 
     public String getConnectionId() {
-            return getPropertyAsString("connectionId");
+        return getPropertyAsString("connectionId");
     }
 
     public void setResponsePattern(String responsePattern) {
-            setProperty("responsePattern", responsePattern);
+        setProperty("responsePattern", responsePattern);
     }
 
     public String getResponsePattern() {
-            return getPropertyAsString("responsePattern");
+        return getPropertyAsString("responsePattern");
     }
 
     public void setCloseConncectionPattern(String closeConncectionPattern) {
-            setProperty("closeConncectionPattern", closeConncectionPattern);
+        setProperty("closeConncectionPattern", closeConncectionPattern);
     }
 
     public String getCloseConncectionPattern() {
-            return getPropertyAsString("closeConncectionPattern");
+        return getPropertyAsString("closeConncectionPattern");
     }
 
     public void setProxyAddress(String proxyAddress) {
-            setProperty("proxyAddress", proxyAddress);
+        setProperty("proxyAddress", proxyAddress);
     }
 
     public String getProxyAddress() {
-            return getPropertyAsString("proxyAddress");
+        return getPropertyAsString("proxyAddress");
     }
 
     public void setProxyPassword(String proxyPassword) {
-            setProperty("proxyPassword", proxyPassword);
+        setProperty("proxyPassword", proxyPassword);
     }
 
     public String getProxyPassword() {
-            return getPropertyAsString("proxyPassword");
+        return getPropertyAsString("proxyPassword");
     }
 
     public void setProxyPort(String proxyPort) {
-            setProperty("proxyPort", proxyPort);
+        setProperty("proxyPort", proxyPort);
     }
 
     public String getProxyPort() {
-            return getPropertyAsString("proxyPort");
+        return getPropertyAsString("proxyPort");
     }
 
     public void setProxyUsername(String proxyUsername) {
-            setProperty("proxyUsername", proxyUsername);
+        setProperty("proxyUsername", proxyUsername);
     }
 
     public String getProxyUsername() {
-            return getPropertyAsString("proxyUsername");
+        return getPropertyAsString("proxyUsername");
     }
 
     public void setPingFrequency(String pingFrequency) {
         setProperty("pingFrequency", pingFrequency);
     }
-    
+
     public String getPingFrequency() {
         return getPropertyAsString("pingFrequency", "0");
     }
@@ -547,7 +526,7 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
     public void setPingThreadPoolName(String pingThreadPoolName) {
         setProperty("pingThreadPoolName", pingThreadPoolName);
     }
-    
+
     public String getPingThreadPoolName() {
         return getPropertyAsString("pingThreadPoolName", "default");
     }
@@ -555,17 +534,17 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
     public void setPingThreadPoolSize(String pingThreadPoolSize) {
         setProperty("pingThreadPoolSize", pingThreadPoolSize);
     }
-    
+
     public String getPingThreadPoolSize() {
         return getPropertyAsString("pingThreadPoolSize", "10");
     }
 
     public void setMessageBacklog(String messageBacklog) {
-            setProperty("messageBacklog", messageBacklog);
+        setProperty("messageBacklog", messageBacklog);
     }
 
     public String getMessageBacklog() {
-            return getPropertyAsString("messageBacklog", "3");
+        return getPropertyAsString("messageBacklog", "3");
     }
 
     public void setClearBacklog(Boolean clearBacklog) {
@@ -573,7 +552,7 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
     }
 
     public Boolean getClearBacklog() {
-        return getPropertyAsBoolean("clearBacklog", false);
+        return getPropertyAsBoolean("clearBacklog", true);
     }
 
     public String getQueryString(String contentEncoding) {
@@ -583,7 +562,7 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
             contentEncoding = EncoderCache.URL_ARGUMENT_ENCODING;
         }
         StringBuilder buf = new StringBuilder();
-        PropertyIterator iter =  getQueryStringParameters().iterator();
+        PropertyIterator iter = getQueryStringParameters().iterator();
         boolean first = true;
         while (iter.hasNext()) {
             HTTPArgument item;
@@ -635,7 +614,7 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
 
     @Override
     public void testStarted(String host) {
-        connectionList = new ConcurrentHashMap<>();
+        connectionsMap = new ConcurrentHashMap<>();
     }
 
     @Override
@@ -645,9 +624,15 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
 
     @Override
     public void testEnded(String host) {
-        for (ServiceSocket socket : connectionList.values()) {
+        for (ServiceSocket socket : connectionsMap.values()) {
             socket.close();
         }
+        connectionsMap.clear();
+        for(ScheduledExecutorService executor : schedulers.values()){
+            executor.shutdownNow();
+        }
+        schedulers.clear();
+        executor.shutdownNow();
     }
 
     @Override
