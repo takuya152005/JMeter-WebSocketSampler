@@ -1,7 +1,6 @@
-JMeter
+JMeter WebSocketSampler for Vaadin Push apps
 ======
-
-JMeter - WebSocket Sampler with Ping Support.
+WebSocketSampler plug-in version that enables load testing applications using Vaadin Push
 
 This based on a modified (by https://github.com/johannest) version of maciejzaleski/JMeter-WebSocketSampler that takes in the changes to thread pooling and cookie handling from tradingscreen/JMeter-WebSocketSampler and has a Ping support.
 
