@@ -4,16 +4,6 @@
  */
 package JMeter.plugins.functional.samplers.websocket;
 
-import java.io.IOException;
-import java.io.UnsupportedEncodingException;
-import java.net.HttpCookie;
-import java.net.URI;
-import java.net.URISyntaxException;
-import java.net.URL;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.concurrent.*;
-
 import org.apache.commons.lang3.StringUtils;
 import org.apache.jmeter.config.Argument;
 import org.apache.jmeter.config.Arguments;
@@ -43,6 +33,16 @@ import org.eclipse.jetty.util.ssl.SslContextFactory;
 import org.eclipse.jetty.websocket.client.ClientUpgradeRequest;
 import org.eclipse.jetty.websocket.client.WebSocketClient;
 
+import java.io.IOException;
+import java.io.UnsupportedEncodingException;
+import java.net.HttpCookie;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.net.URL;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.*;
+
 /**
  * @author Maciej Zaleski
  */
@@ -62,7 +62,7 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
     private static final String DEFAULT_PROTOCOL = "ws";
 
     private static Map<String, ServiceSocket> connectionsMap;
-    private static ExecutorService executor = Executors.newCachedThreadPool();
+    private static ExecutorService executor;
     // TODO: the size of this thread pool should be configurable
 
     private static Map<String, ScheduledExecutorService> schedulers = new HashMap<>();
@@ -249,9 +249,7 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
             // and no response matching connection closing pattern is received
             // it seems that timeout is reached
             String responseMessage = socket.getResponseMessage();
-            if (responseMessage == null || responseMessage.isEmpty()) {
-                isTimeout = true;
-            }
+            isTimeout = responseMessage == null || responseMessage.isEmpty() || !socket.isExpressionMatched();
 
             //Set sampler response code
             if (socket.getError() != 0 || isTimeout) {
@@ -286,7 +284,9 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
         if (closeSocket) {
             socket.close(200, "Close requested by the test");
         }
-
+        if(!socket.isConnected()){
+            connectionsMap.remove(getThreadName() + getConnectionId());
+        }
         String logMessage = (socket != null) ? socket.getLogMessage() : "";
         sampleResult.setResponseMessage(logMessage + errorList);
         return sampleResult;
@@ -615,6 +615,7 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
     @Override
     public void testStarted(String host) {
         connectionsMap = new ConcurrentHashMap<>();
+        executor = Executors.newCachedThreadPool();
     }
 
     @Override
