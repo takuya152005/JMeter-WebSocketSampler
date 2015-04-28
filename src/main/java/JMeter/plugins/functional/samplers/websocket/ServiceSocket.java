@@ -18,6 +18,8 @@ import org.eclipse.jetty.websocket.client.WebSocketClient;
 import java.io.IOException;
 import java.util.Deque;
 import java.util.LinkedList;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
@@ -32,7 +34,7 @@ public class ServiceSocket {
 
     protected WebSocketSampler sampler;
     protected WebSocketClient client;
-    protected Deque<String> responeBacklog = new LinkedList<>();
+    protected Queue<String> responeBacklog = new ConcurrentLinkedDeque<>();
     protected Integer error = 0;
     protected StringBuilder logMessage = new StringBuilder();
     protected CountDownLatch openLatch = new CountDownLatch(1);
@@ -53,7 +55,7 @@ public class ServiceSocket {
     }
 
     @OnWebSocketMessage
-    public synchronized void onMessage(String msg) {
+    public void onMessage(String msg) {
         log.debug("Received message: " + msg);
         String length = " (" + msg.length() + " bytes)";
         logMessage.append(" - Received message ").append(length);
@@ -74,7 +76,7 @@ public class ServiceSocket {
     }
 
     @OnWebSocketConnect
-    public synchronized void onOpen(Session session) {
+    public void onOpen(Session session) {
         logMessage.append(" - WebSocket conection has been opened").append('\n');
         log.debug("Connect " + session.isOpen());
         this.session = session;
@@ -104,7 +106,7 @@ public class ServiceSocket {
     /**
      * @return response message made of messages saved in the responeBacklog cache
      */
-    public synchronized String getResponseMessage() {
+    public String getResponseMessage() {
         StringBuilder responseMessageBuilder = new StringBuilder();
 
         //Iterate through response messages saved in the responeBacklog cache
@@ -163,7 +165,7 @@ public class ServiceSocket {
         close(StatusCode.NORMAL, "JMeter closed session.");
     }
 
-    public void close(int statusCode, String statusText) {
+    public synchronized void close(int statusCode, String statusText) {
         //Closing WebSocket session
         if (session != null) {
             session.close(statusCode, statusText);

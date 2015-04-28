@@ -266,6 +266,14 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
             if (getClearBacklog()) {
                 socket.clearBacklog();
             }
+
+            if (closeSocket) {
+                socket.close(200, "Close requested by the test");
+            }
+
+            if(!socket.isConnected()){
+                connectionsMap.remove(getThreadName() + getConnectionId());
+            }
         } catch (URISyntaxException e) {
             errorList.append(" - Invalid URI syntax: ").append(e.getMessage()).append("\n").append(StringUtils.join(e.getStackTrace(), "\n")).append("\n");
         } catch (IOException e) {
@@ -281,12 +289,6 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
         sampleResult.sampleEnd();
         sampleResult.setSuccessful(isOK);
 
-        if (closeSocket) {
-            socket.close(200, "Close requested by the test");
-        }
-        if(!socket.isConnected()){
-            connectionsMap.remove(getThreadName() + getConnectionId());
-        }
         String logMessage = (socket != null) ? socket.getLogMessage() : "";
         sampleResult.setResponseMessage(logMessage + errorList);
         return sampleResult;
