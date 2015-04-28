@@ -7,6 +7,7 @@ package JMeter.plugins.functional.samplers.websocket;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.jmeter.config.Argument;
 import org.apache.jmeter.config.Arguments;
+import org.apache.jmeter.engine.event.LoopIterationEvent;
 import org.apache.jmeter.protocol.http.control.CookieHandler;
 import org.apache.jmeter.protocol.http.control.CookieManager;
 import org.apache.jmeter.protocol.http.control.Header;
@@ -18,6 +19,7 @@ import org.apache.jmeter.samplers.AbstractSampler;
 import org.apache.jmeter.samplers.Entry;
 import org.apache.jmeter.samplers.SampleResult;
 import org.apache.jmeter.testelement.TestElement;
+import org.apache.jmeter.testelement.TestIterationListener;
 import org.apache.jmeter.testelement.TestStateListener;
 import org.apache.jmeter.testelement.property.PropertyIterator;
 import org.apache.jmeter.testelement.property.StringProperty;
@@ -46,7 +48,7 @@ import java.util.concurrent.*;
 /**
  * @author Maciej Zaleski
  */
-public class WebSocketSampler extends AbstractSampler implements TestStateListener {
+public class WebSocketSampler extends AbstractSampler implements TestStateListener, TestIterationListener {
     private static final long serialVersionUID = 5859387434748163229L;
 
     public static final int DEFAULT_CONNECTION_TIMEOUT = 20000; //20 sec
@@ -62,6 +64,7 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
     private static final String DEFAULT_PROTOCOL = "ws";
 
     private static Map<String, ServiceSocket> connectionsMap;
+    private static Map<String, Integer> iterations;
     private static ExecutorService executor;
     // TODO: the size of this thread pool should be configurable
 
@@ -94,7 +97,7 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
     private ServiceSocket getConnectionSocket() throws Exception {
         URI uri = getUri();
 
-        String connectionId = getThreadName() + getConnectionId();
+        String connectionId = getConnectionIdForConnectionsMap();
         ServiceSocket socket;
 
         if (isStreamingConnection() && connectionsMap.containsKey(connectionId)) {
@@ -262,17 +265,14 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
 
             //set sampler response
             sampleResult.setResponseData(socket.getResponseMessage(), getContentEncoding());
-
             if (getClearBacklog()) {
                 socket.clearBacklog();
             }
-
             if (closeSocket) {
                 socket.close(200, "Close requested by the test");
             }
-
             if(!socket.isConnected()){
-                connectionsMap.remove(getThreadName() + getConnectionId());
+                connectionsMap.remove(getConnectionIdForConnectionsMap());
             }
         } catch (URISyntaxException e) {
             errorList.append(" - Invalid URI syntax: ").append(e.getMessage()).append("\n").append(StringUtils.join(e.getStackTrace(), "\n")).append("\n");
@@ -617,6 +617,7 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
     @Override
     public void testStarted(String host) {
         connectionsMap = new ConcurrentHashMap<>();
+        iterations = new HashMap<>();
         executor = Executors.newCachedThreadPool();
     }
 
@@ -631,6 +632,7 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
             socket.close();
         }
         connectionsMap.clear();
+        iterations.clear();
         for(ScheduledExecutorService executor : schedulers.values()){
             executor.shutdownNow();
         }
@@ -652,5 +654,14 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
         } else {
             super.addTestElement(el);
         }
+    }
+
+    @Override
+    public void testIterationStart(LoopIterationEvent loopIterationEvent) {
+        iterations.put(getThreadName(), loopIterationEvent.getIteration());
+    }
+
+    private String getConnectionIdForConnectionsMap(){
+        return getThreadName() + iterations.get(getThreadName()) + getConnectionId();
     }
 }

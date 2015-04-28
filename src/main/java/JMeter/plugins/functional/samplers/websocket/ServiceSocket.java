@@ -17,8 +17,6 @@ import org.eclipse.jetty.websocket.client.WebSocketClient;
 
 import java.io.IOException;
 import java.util.Deque;
-import java.util.LinkedList;
-import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -34,7 +32,7 @@ public class ServiceSocket {
 
     protected WebSocketSampler sampler;
     protected WebSocketClient client;
-    protected Queue<String> responeBacklog = new ConcurrentLinkedDeque<>();
+    protected Deque<String> responeBacklog = new ConcurrentLinkedDeque<>();
     protected Integer error = 0;
     protected StringBuilder logMessage = new StringBuilder();
     protected CountDownLatch openLatch = new CountDownLatch(1);
