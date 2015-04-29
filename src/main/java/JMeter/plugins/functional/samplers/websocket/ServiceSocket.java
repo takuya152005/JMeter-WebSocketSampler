@@ -13,11 +13,10 @@ import org.eclipse.jetty.websocket.api.annotations.OnWebSocketClose;
 import org.eclipse.jetty.websocket.api.annotations.OnWebSocketConnect;
 import org.eclipse.jetty.websocket.api.annotations.OnWebSocketMessage;
 import org.eclipse.jetty.websocket.api.annotations.WebSocket;
-import org.eclipse.jetty.websocket.client.WebSocketClient;
 
 import java.io.IOException;
-import java.util.Deque;
-import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
@@ -31,8 +30,7 @@ public class ServiceSocket {
     private static final Logger log = LoggingManager.getLoggerForClass();
 
     protected WebSocketSampler sampler;
-    protected WebSocketClient client;
-    protected Deque<String> responeBacklog = new ConcurrentLinkedDeque<>();
+    protected Queue<String> responeBacklog = new ConcurrentLinkedQueue<>();
     protected Integer error = 0;
     protected StringBuilder logMessage = new StringBuilder();
     protected CountDownLatch openLatch = new CountDownLatch(1);
@@ -43,10 +41,9 @@ public class ServiceSocket {
     protected boolean connected = false;
     protected boolean expressionMatched = false;
 
-    public ServiceSocket(WebSocketSampler sampler, WebSocketClient client) {
+    public ServiceSocket(WebSocketSampler sampler) {
         this.sampler = sampler;
-        this.client = client;
-        
+
         logMessage.append("\n\n[Execution Flow]\n");
         logMessage.append(" - Opening new connection\n");
         initializePatterns();
@@ -67,7 +64,6 @@ public class ServiceSocket {
             logMessage.append("; matched connection close pattern").append('\n');
             expressionMatched = true;
             close(StatusCode.NORMAL, "JMeter closed session.");
-            closeLatch.countDown();
         } else {
             logMessage.append("; didn't match any pattern").append('\n');
         }
@@ -172,14 +168,7 @@ public class ServiceSocket {
         } else {
             logMessage.append(" - WebSocket session wasn't started (...that's odd)").append('\n');
         }
-
-        //Stoping WebSocket client; thanks m0ro
-        try {
-            client.stop();
-            logMessage.append(" - WebSocket client closed by the client").append('\n');
-        } catch (Exception e) {
-            logMessage.append(" - WebSocket client wasn't started (...that's odd)").append('\n');
-        }
+        closeLatch.countDown();
     }
 
     public void ping() {
@@ -244,7 +233,7 @@ public class ServiceSocket {
 
         this.logMessage = new StringBuilder();
         this.logMessage.append("\n\n[Execution Flow]\n");
-        this.logMessage.append(" - Reusing exising connection\n");
+        this.logMessage.append(" - Reusing exising connection: ").append(sampler.getConnectionIdForConnectionsMap()).append('\n');
         this.error = 0;
 
         initializePatterns();

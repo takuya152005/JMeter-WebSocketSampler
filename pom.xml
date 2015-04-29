@@ -12,7 +12,7 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <dependency.version.jmeter>2.11</dependency.version.jmeter>
-        <dependency.version.jetty>9.2.7.v20150116</dependency.version.jetty>
+        <dependency.version.jetty>9.2.10.v20150310</dependency.version.jetty>
     </properties>
 
     <build>

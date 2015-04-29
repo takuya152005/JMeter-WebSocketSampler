@@ -7,7 +7,6 @@ package JMeter.plugins.functional.samplers.websocket;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.jmeter.config.Argument;
 import org.apache.jmeter.config.Arguments;
-import org.apache.jmeter.engine.event.LoopIterationEvent;
 import org.apache.jmeter.protocol.http.control.CookieHandler;
 import org.apache.jmeter.protocol.http.control.CookieManager;
 import org.apache.jmeter.protocol.http.control.Header;
@@ -32,6 +31,7 @@ import org.apache.log.Logger;
 import org.eclipse.jetty.http.HttpStatus;
 import org.eclipse.jetty.util.HttpCookieStore;
 import org.eclipse.jetty.util.ssl.SslContextFactory;
+import org.eclipse.jetty.websocket.api.WebSocketTimeoutException;
 import org.eclipse.jetty.websocket.client.ClientUpgradeRequest;
 import org.eclipse.jetty.websocket.client.WebSocketClient;
 
@@ -41,6 +41,7 @@ import java.net.HttpCookie;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.*;
@@ -48,7 +49,7 @@ import java.util.concurrent.*;
 /**
  * @author Maciej Zaleski
  */
-public class WebSocketSampler extends AbstractSampler implements TestStateListener, TestIterationListener {
+public class WebSocketSampler extends AbstractSampler implements TestStateListener {
     private static final long serialVersionUID = 5859387434748163229L;
 
     public static final int DEFAULT_CONNECTION_TIMEOUT = 20000; //20 sec
@@ -63,10 +64,8 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
     private static final String WSS_PREFIX = "wss://"; // $NON-NLS-1$
     private static final String DEFAULT_PROTOCOL = "ws";
 
-    private static Map<String, ServiceSocket> connectionsMap;
-    private static Map<String, Integer> iterations;
-    private static ExecutorService executor;
-    // TODO: the size of this thread pool should be configurable
+    private static Map<String, ServiceSocket> connectionsMap = Collections.synchronizedMap(new HashMap<String, ServiceSocket>());
+    private static WebSocketClient webSocketClient;
 
     private static Map<String, ScheduledExecutorService> schedulers = new HashMap<>();
 
@@ -106,19 +105,21 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
             return socket;
         }
 
-        //Create WebSocket client
-        SslContextFactory sslContexFactory = new SslContextFactory();
-        sslContexFactory.setTrustAll(isIgnoreSslErrors());
-        WebSocketClient webSocketClient = new WebSocketClient(sslContexFactory, executor);
-
         if(isStreamingConnection()){
-            socket = new ServiceSocket(this, webSocketClient);
+            socket = new ServiceSocket(this);
             connectionsMap.put(connectionId, socket);
         } else {
-            socket = new ServiceSocket(this, webSocketClient);
+            socket = new ServiceSocket(this);
         }
 
         //Start WebSocket client thread and upgrage HTTP connection
+        ClientUpgradeRequest request = new ClientUpgradeRequest();
+        if (headerManager != null) {
+            for (int i = 0; i < headerManager.size(); i++) {
+                Header header = headerManager.get(i);
+                request.setHeader(header.getName(), header.getValue());
+            }
+        }
         if (cookieManager != null) {
             HttpCookieStore cookieStore = new HttpCookieStore();
             for (int i = 0; i < cookieManager.getCookieCount(); i++) {
@@ -132,15 +133,8 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
                         cookie
                 );
             }
-            webSocketClient.setCookieStore(cookieStore);
-        }
-        webSocketClient.start();
-        ClientUpgradeRequest request = new ClientUpgradeRequest();
-        if (headerManager != null) {
-            for (int i = 0; i < headerManager.size(); i++) {
-                Header header = headerManager.get(i);
-                request.setHeader(header.getName(), header.getValue());
-            }
+            request.setRequestURI(uri);
+            request.setCookiesFrom(cookieStore);
         }
         webSocketClient.connect(socket, uri, request);
 
@@ -152,9 +146,11 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
             log.warn("Connection timeout is not a number; using the default connection timeout of " + DEFAULT_CONNECTION_TIMEOUT + "ms");
             connectionTimeout = DEFAULT_CONNECTION_TIMEOUT;
         }
-
         socket.awaitOpen(connectionTimeout, TimeUnit.MILLISECONDS);
 
+        if(!socket.isConnected()){
+            throw new WebSocketTimeoutException("Connection timeout!");
+        }
 
         int pingFrequency = Integer.parseInt(getPingFrequency());
         final ServiceSocket socketFinal = socket;
@@ -199,7 +195,6 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
         StringBuilder errorList = new StringBuilder();
         errorList.append("\n\n[Problems]\n");
 
-        boolean closeSocket = false;
         boolean isOK = false;
         boolean isTimeout = false;
 
@@ -268,12 +263,6 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
             if (getClearBacklog()) {
                 socket.clearBacklog();
             }
-            if (closeSocket) {
-                socket.close(200, "Close requested by the test");
-            }
-            if(!socket.isConnected()){
-                connectionsMap.remove(getConnectionIdForConnectionsMap());
-            }
         } catch (URISyntaxException e) {
             errorList.append(" - Invalid URI syntax: ").append(e.getMessage()).append("\n").append(StringUtils.join(e.getStackTrace(), "\n")).append("\n");
         } catch (IOException e) {
@@ -285,7 +274,9 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
         } catch (Exception e) {
             errorList.append(" - Unexpected error: ").append(e.getMessage()).append("\n").append(StringUtils.join(e.getStackTrace(), "\n")).append("\n");
         }
-
+        if(!socket.isConnected()){
+            connectionsMap.remove(getConnectionIdForConnectionsMap());
+        }
         sampleResult.sampleEnd();
         sampleResult.setSuccessful(isOK);
 
@@ -616,9 +607,15 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
 
     @Override
     public void testStarted(String host) {
-        connectionsMap = new ConcurrentHashMap<>();
-        iterations = new HashMap<>();
-        executor = Executors.newCachedThreadPool();
+        if(null == webSocketClient || webSocketClient.isStopped()) {
+            webSocketClient = createWebSocketClient();
+            try {
+                webSocketClient.start();
+                log.info("WebSocketClient started");
+            } catch (Exception e) {
+                log.error("WebSocketClient has not been started", e);
+            }
+        }
     }
 
     @Override
@@ -632,12 +629,11 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
             socket.close();
         }
         connectionsMap.clear();
-        iterations.clear();
         for(ScheduledExecutorService executor : schedulers.values()){
             executor.shutdownNow();
         }
         schedulers.clear();
-        executor.shutdownNow();
+        stopWebSocketClient();
     }
 
     @Override
@@ -656,12 +652,26 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
         }
     }
 
-    @Override
-    public void testIterationStart(LoopIterationEvent loopIterationEvent) {
-        iterations.put(getThreadName(), loopIterationEvent.getIteration());
+    String getConnectionIdForConnectionsMap(){
+        return getThreadName() + getConnectionId();
     }
 
-    private String getConnectionIdForConnectionsMap(){
-        return getThreadName() + iterations.get(getThreadName()) + getConnectionId();
+    private WebSocketClient createWebSocketClient(){
+        SslContextFactory sslContexFactory = new SslContextFactory();
+        sslContexFactory.setTrustAll(isIgnoreSslErrors());
+        return new WebSocketClient(sslContexFactory, Executors.newCachedThreadPool());
+    }
+
+    private void stopWebSocketClient(){
+        //Stoping WebSocket client; thanks m0ro
+        if(!webSocketClient.isStopped() && !webSocketClient.isStopping()) {
+            try {
+                webSocketClient.stop();
+                ((ExecutorService) webSocketClient.getExecutor()).shutdownNow();
+                log.info("WebSocket client closed");
+            } catch (Exception e) {
+                log.error("WebSocket client wasn't started (...that's odd)");
+            }
+        }
     }
 }
