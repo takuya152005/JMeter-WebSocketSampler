@@ -163,11 +163,11 @@ public class ServiceSocket {
         //Closing WebSocket session
         if (session != null) {
             session.close(statusCode, statusText);
-            connected = false;
             logMessage.append(" - WebSocket session closed by the client").append('\n');
         } else {
             logMessage.append(" - WebSocket session wasn't started (...that's odd)").append('\n');
         }
+        connected = false;
         closeLatch.countDown();
     }
 

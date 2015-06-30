@@ -18,7 +18,6 @@ import org.apache.jmeter.samplers.AbstractSampler;
 import org.apache.jmeter.samplers.Entry;
 import org.apache.jmeter.samplers.SampleResult;
 import org.apache.jmeter.testelement.TestElement;
-import org.apache.jmeter.testelement.TestIterationListener;
 import org.apache.jmeter.testelement.TestStateListener;
 import org.apache.jmeter.testelement.property.PropertyIterator;
 import org.apache.jmeter.testelement.property.StringProperty;
@@ -44,7 +43,11 @@ import java.net.URL;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 
 /**
  * @author Maciej Zaleski
@@ -141,14 +144,7 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
         webSocketClient.connect(socket, uri, request);
 
         //Get connection timeout or use the default value
-        int connectionTimeout;
-        try {
-            connectionTimeout = Integer.parseInt(getConnectionTimeout());
-        } catch (NumberFormatException ex) {
-            log.warn("Connection timeout is not a number; using the default connection timeout of " + DEFAULT_CONNECTION_TIMEOUT + "ms");
-            connectionTimeout = DEFAULT_CONNECTION_TIMEOUT;
-        }
-        socket.awaitOpen(connectionTimeout, TimeUnit.MILLISECONDS);
+        socket.awaitOpen(getPropertyAsInt("connectionTimeoutInt"), TimeUnit.MILLISECONDS);
 
         if(!socket.isConnected()){
             throw new WebSocketTimeoutException("Connection timeout!");
@@ -208,7 +204,6 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
 
         //Could improve precission by moving this closer to the action
         sampleResult.sampleStart();
-
         try {
             socket = getConnectionSocket();
             if (socket == null) {
@@ -226,19 +221,12 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
                 socket.sendMessage(payloadMessage);
             }
 
-            int responseTimeout;
-            try {
-                responseTimeout = Integer.parseInt(getResponseTimeout());
-            } catch (NumberFormatException ex) {
-                log.warn("Request timeout is not a number; using the default request timeout of " + DEFAULT_RESPONSE_TIMEOUT + "ms");
-                responseTimeout = DEFAULT_RESPONSE_TIMEOUT;
-            }
-
             //Wait for any of the following:
             // - Response matching response pattern is received
             // - Response matching connection closing pattern is received
             // - Timeout is reached
-            socket.awaitClose(responseTimeout, TimeUnit.MILLISECONDS);
+            socket.awaitClose(getPropertyAsInt("responseTimeoutInt"), TimeUnit.MILLISECONDS);
+            sampleResult.sampleEnd();
 
             if (pingerFuture != null) {
                 log.info("removing pinger");
@@ -266,24 +254,37 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
                 socket.clearBacklog();
             }
         } catch (URISyntaxException e) {
+            isOK = false;
             errorList.append(" - Invalid URI syntax: ").append(e.getMessage()).append("\n").append(StringUtils.join(e.getStackTrace(), "\n")).append("\n");
         } catch (IOException e) {
+            isOK = false;
             errorList.append(" - IO Exception: ").append(e.getMessage()).append("\n").append(StringUtils.join(e.getStackTrace(), "\n")).append("\n");
         } catch (NumberFormatException e) {
+            isOK = false;
             errorList.append(" - Cannot parse number: ").append(e.getMessage()).append("\n").append(StringUtils.join(e.getStackTrace(), "\n")).append("\n");
         } catch (InterruptedException e) {
+            isOK = false;
             errorList.append(" - Execution interrupted: ").append(e.getMessage()).append("\n").append(StringUtils.join(e.getStackTrace(), "\n")).append("\n");
         } catch (Exception e) {
+            isOK = false;
             errorList.append(" - Unexpected error: ").append(e.getMessage()).append("\n").append(StringUtils.join(e.getStackTrace(), "\n")).append("\n");
+        } finally {
+            if(sampleResult.getEndTime() == 0L){
+                sampleResult.sampleEnd();
+            }
+            if(sampleResult.getResponseCode().isEmpty()){
+                sampleResult.setResponseCode(String.valueOf(HttpStatus.BAD_REQUEST_400));
+            }
+            if(!isOK){
+                socket.close();
+            }
+            if(!socket.isConnected()){
+                connectionsMap.remove(getConnectionIdForConnectionsMap());
+            }
+            sampleResult.setSuccessful(isOK);
+            String logMessage = (socket != null) ? socket.getLogMessage() : "";
+            sampleResult.setResponseMessage(logMessage + errorList);
         }
-        if(!socket.isConnected()){
-            connectionsMap.remove(getConnectionIdForConnectionsMap());
-        }
-        sampleResult.sampleEnd();
-        sampleResult.setSuccessful(isOK);
-
-        String logMessage = (socket != null) ? socket.getLogMessage() : "";
-        sampleResult.setResponseMessage(logMessage + errorList);
         return sampleResult;
     }
 
@@ -617,6 +618,19 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
             } catch (Exception e) {
                 log.error("WebSocketClient has not been started", e);
             }
+        }
+
+        try {
+            setProperty("connectionTimeoutInt", Integer.parseInt(getConnectionTimeout()));
+        } catch (NumberFormatException ex) {
+            log.warn("Connection timeout is not a number; using the default connection timeout of " + DEFAULT_CONNECTION_TIMEOUT + " ms");
+            setProperty("connectionTimeoutInt", DEFAULT_RESPONSE_TIMEOUT);
+        }
+        try {
+            setProperty("responseTimeoutInt", Integer.parseInt(getResponseTimeout()));
+        } catch (NumberFormatException ex) {
+            log.warn("Response timeout is not a number; using the default response timeout of " + DEFAULT_RESPONSE_TIMEOUT + " ms");
+            setProperty("responseTimeoutInt", DEFAULT_RESPONSE_TIMEOUT);
         }
     }
 
