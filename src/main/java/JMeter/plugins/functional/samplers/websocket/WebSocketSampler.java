@@ -98,6 +98,7 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
 
     private ServiceSocket getConnectionSocket() throws Exception {
         URI uri = getUri();
+        boolean addSocketToMap = false;
 
         String connectionId = getConnectionIdForConnectionsMap();
         ServiceSocket socket;
@@ -112,7 +113,7 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
 
         if(isStreamingConnection()){
             socket = new ServiceSocket(this);
-            connectionsMap.put(connectionId, socket);
+            addSocketToMap = true;
         } else {
             socket = new ServiceSocket(this);
         }
@@ -179,6 +180,9 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
             }
         }
 
+        if(addSocketToMap) {
+            connectionsMap.put(connectionId, socket);
+        }
         return socket;
     }
 

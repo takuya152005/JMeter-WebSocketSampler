@@ -35,7 +35,7 @@ public class ServiceSocket {
     protected StringBuilder logMessage = new StringBuilder();
     protected CountDownLatch openLatch = new CountDownLatch(1);
     protected CountDownLatch closeLatch = new CountDownLatch(1);
-    protected Session session = null;
+    protected Session session;
     protected Pattern responseExpression;
     protected Pattern disconnectExpression;
     protected boolean connected = false;
