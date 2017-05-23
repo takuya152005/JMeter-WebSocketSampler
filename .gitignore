@@ -1,1 +1,14 @@
-/target/
+.DS_Store
+/target
+/.settings
+/.classpath
+/.project
+/.checkstyle
+*.class
+
+# Package Files #
+*.jar
+*.war
+*.ear
+src/test/resources/local/
+/bin/
