@@ -12,3 +12,7 @@ Improvements made by me for better Vaadin Push testing:
 - resources (executors) clearing when test ends
 - "Clear backlog" property is by default set to true
 - some bug fixes suggested by FindBugs
+
+
+Ver 1.1.0-SNAPSHOT
+- Corresponds to Web socket message of SpringFW
